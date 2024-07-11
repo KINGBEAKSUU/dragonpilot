@@ -375,8 +375,8 @@ def no_lane_available_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.S
   lane_width_msg = f"{lane_width:.1f} meters" if metric else f"{lane_width * CV.METER_TO_FOOT:.1f} feet"
 
   return Alert(
-    "No lane available",
-    f"Detected lane width is only {lane_width_msg}",
+    "변경 불가능",
+    f"감지 된 차선 너비 : {lane_width_msg}",
     AlertStatus.normal, AlertSize.mid,
     Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .2)
 
@@ -1096,7 +1096,7 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
 
   EventName.turningLeft: {
     ET.WARNING: Alert(
-      "Turning Left",
+      "차섬변경",
       "",
       AlertStatus.normal, AlertSize.small,
       Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .1, alert_rate=0.75),
@@ -1104,7 +1104,7 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
 
   EventName.turningRight: {
     ET.WARNING: Alert(
-      "Turning Right",
+      "차선변경",
       "",
       AlertStatus.normal, AlertSize.small,
       Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .1, alert_rate=0.75),
