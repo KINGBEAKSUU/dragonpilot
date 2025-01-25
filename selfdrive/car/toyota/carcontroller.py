@@ -1,4 +1,5 @@
 import math
+import numpy as np
 
 from cereal import car
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -27,6 +28,7 @@ ACCELERATION_DUE_TO_GRAVITY = 9.81  # m/s^2
 # the down limit roughly matches the rate of ACCEL_NET, reducing PCM compensation windup
 ACCEL_WINDUP_LIMIT = 4.0 * DT_CTRL * 3  # m/s^2 / frame
 ACCEL_WINDDOWN_LIMIT = -4.0 * DT_CTRL * 3  # m/s^2 / frame
+ACCEL_PID_UNWIND = 0.03 * DT_CTRL * 3  # m/s^2 / frame
 
 # LKA limits
 # EPS faults if you apply torque while the steering rate is above 100 deg/s for too long
@@ -48,8 +50,8 @@ UNLOCK_CMD = b"\x40\x05\x30\x11\x00\x40\x00\x00"
 PARK = car.CarState.GearShifter.park
 
 def get_long_tune(CP, params):
-  kiBP = [0.]
-  kiV = [0.25]
+  kiBP = [2., 5.]
+  kiV = [0.5, 0.25]
 
   return PIDController(0.0, (kiBP, kiV), k_f=1.0,
                        pos_limit=params.ACCEL_MAX, neg_limit=params.ACCEL_MIN,
@@ -87,30 +89,27 @@ class CarController(CarControllerBase):
     self.secoc_prev_reset_counter = 0
 
     # FrogPilot variables
+    self.stock_integral_gain = self.long_pid._k_i
     self.stock_max_accel = self.params.ACCEL_MAX
 
     self.doors_locked = False
     self.reverse_cruise_active = False
-    self.updated_pid = False
 
     self.cruise_timer = 0
     self.previous_set_speed = 0
 
   def update(self, CC, CS, now_nanos, frogpilot_toggles):
-    if frogpilot_toggles.sport_plus:
-      if not self.updated_pid:
-        self.params.ACCEL_MAX = get_max_allowed_accel(0)
-        self.long_pid = get_long_tune(self.CP, self.params)
-        self.updated_pid = True
-
-      self.params.ACCEL_MAX = min(frogpilot_toggles.max_desired_acceleration, get_max_allowed_accel(CS.out.vEgo))
+    if frogpilot_toggles.frogsgomoo_tweak:
+      self.long_pid._k_i = [frogpilot_toggles.kiBP, frogpilot_toggles.kiV]
     else:
-      if self.updated_pid:
-        self.params.ACCEL_MAX = self.stock_max_accel
-        self.long_pid = get_long_tune(self.CP, self.params)
-        self.updated_pid = False
+      self.long_pid._k_i = self.stock_integral_gain
 
+    if frogpilot_toggles.sport_plus:
+      self.params.ACCEL_MAX = min(frogpilot_toggles.max_desired_acceleration, get_max_allowed_accel(CS.out.vEgo))
+      self.long_pid.pos_limit = self.params.ACCEL_MAX
+    else:
       self.params.ACCEL_MAX = min(frogpilot_toggles.max_desired_acceleration, self.stock_max_accel)
+      self.long_pid.pos_limit = self.params.ACCEL_MAX
 
     actuators = CC.actuators
     stopping = actuators.longControlState == LongCtrlState.stopping
@@ -271,13 +270,19 @@ class CarController(CarControllerBase):
         prev_aego = self.aego.x
         self.aego.update(a_ego_blended)
         j_ego = (self.aego.x - prev_aego) / (DT_CTRL * 3)
-        a_ego_future = a_ego_blended + j_ego * 0.5
 
-        if actuators.longControlState == LongCtrlState.pid:
+        future_t = float(np.interp(CS.out.vEgo, [2., 5.], [0.25, 0.5]))
+        a_ego_future = a_ego_blended + j_ego * future_t
+
+        if CC.longActive:
+          # constantly slowly unwind integral to recover from large temporary errors
+          self.long_pid.i -= ACCEL_PID_UNWIND * float(np.sign(self.long_pid.i))
+
           error_future = pcm_accel_cmd - a_ego_future
           pcm_accel_cmd = self.long_pid.update(error_future,
                                                speed=CS.out.vEgo,
-                                               feedforward=pcm_accel_cmd)
+                                               feedforward=pcm_accel_cmd,
+                                               freeze_integrator=actuators.longControlState != LongCtrlState.pid)
         else:
           self.long_pid.reset()
 

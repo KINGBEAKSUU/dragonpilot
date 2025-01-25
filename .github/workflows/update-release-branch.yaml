@@ -1,8 +1,7 @@
 name: Update FrogPilot Branch
 
 on:
-  schedule:
-    - cron: '0 19 1 * *'
+  workflow_dispatch:
 
 jobs:
   update-branch:
@@ -12,6 +11,13 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+
+      - name: Reset "FrogPilot-Previous" branch to match "FrogPilot"
+        run: |
+          git fetch origin
+          git checkout FrogPilot-Previous || git checkout -b FrogPilot-Previous
+          git reset --hard origin/FrogPilot
+          git push origin FrogPilot-Previous --force
 
       - name: Reset "FrogPilot" branch to match "FrogPilot-Staging"
         run: |
